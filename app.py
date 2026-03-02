@@ -1,61 +1,63 @@
 import streamlit as st
 import pandas as pd
-import time
+import re
 
 # --- 1. KHỞI TẠO ---
 for key in ["page", "current_id", "current_exam"]:
     if key not in st.session_state:
         st.session_state[key] = "Home" if key == "page" else None
 
-st.set_page_config(page_title="Toán Thầy ... 2026", layout="wide")
+st.set_page_config(page_title="Toán Thầy 2026", layout="wide")
 
-# --- 2. HÀM TẢI DỮ LIỆU ---
-@st.cache_data(ttl=1) # Giảm cache xuống để cập nhật nhanh
-def load_data(url):
-    try:
-        # Ép đọc dữ liệu thô từ CSV
-        df = pd.read_csv(url, dtype=str)
-        # Chuẩn hóa tên cột: xóa khoảng trắng, viết thường
-        df.columns = [str(c).strip().lower() for c in df.columns]
-        # Lọc rác (0, nan)
-        df = df.dropna(how='all')
-        return df.map(lambda x: "" if pd.isna(x) or str(x).strip() in ["0", "0.0", "nan", "None"] else str(x).strip())
-    except Exception as e:
-        return None
-
+# --- 2. HÀM XỬ LÝ LINK SHEETS (SỬA LỖI 404) ---
 def get_csv_url(sheet_url, gid):
     try:
-        # Tách lấy phần gốc của link Sheets để tạo link tải CSV
-        base_url = sheet_url.split('/edit')[0]
-        return f"{base_url}/export?format=csv&gid={gid}"
-    except: return ""
+        # Sử dụng Regex để tìm ID của file Sheets (chuỗi ký tự dài giữa /d/ và /)
+        match = re.search(r"/d/([a-zA-Z0-9-_]+)", sheet_url)
+        if match:
+            file_id = match.group(1)
+            # Link xuất CSV chuẩn của Google
+            return f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=csv&gid={gid}"
+        return ""
+    except:
+        return ""
 
-# --- 3. CSS GIAO DIỆN ---
+@st.cache_data(ttl=5)
+def load_data(url):
+    if not url: return None
+    try:
+        df = pd.read_csv(url, dtype=str)
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        df = df.dropna(how='all')
+        return df.map(lambda x: "" if pd.isna(x) or str(x).strip() in ["0", "0.0", "nan", "None"] else str(x).strip())
+    except:
+        return None
+
+# --- 3. GIAO DIỆN ---
 st.markdown("""
     <style>
     header {visibility: hidden;}
     .stApp { background-color: #0D1117; color: #C9D1D9; }
     [data-testid="stVerticalBlockBorderWrapper"] { background-color: #161B22 !important; border: 1px solid #30363D !important; border-radius: 10px !important; }
     .stImage > img { display: block; margin: auto; max-width: 450px !important; width: 100% !important; border-radius: 8px; }
-    .main-title { text-align: center; color: #58A6FF; font-size: 2.2em; font-weight: 800; }
     </style>
 """, unsafe_allow_html=True)
 
-# Lấy link từ Secrets
+# Lấy URL từ Secrets
 try:
     SHEET_URL = st.secrets["connections"]["gsheets"]["spreadsheet"]
 except:
-    st.error("❌ Lỗi: Thầy chưa dán link vào mục Secrets của Streamlit Cloud!"); st.stop()
+    st.error("❌ Thầy chưa dán link vào mục Secrets trên Streamlit Cloud!"); st.stop()
 
 # --- 4. TRANG CHỦ ---
 if st.session_state.page == "Home":
-    st.markdown('<p class="main-title">LUYỆN THI TOÁN 2026</p>', unsafe_allow_html=True)
+    st.markdown('<h1 style="text-align:center;color:#58A6FF;">LUYỆN THI TOÁN 2026</h1>', unsafe_allow_html=True)
     
-    # GID=0 cho tab danh sách bài tập
+    # GID=0 (Tab danh mục)
     df_topics = load_data(get_csv_url(SHEET_URL, "0"))
     
     if df_topics is not None:
-        # TÌM CỘT ID THÔNG MINH: Thầy đặt tên là 'id' hay 'topic_id' đều được
+        # Tự động nhận diện cột topic_id hoặc id
         cols = df_topics.columns.tolist()
         id_col = 'topic_id' if 'topic_id' in cols else ('id' if 'id' in cols else cols[0])
         
@@ -63,20 +65,22 @@ if st.session_state.page == "Home":
         for i, (pref, ico) in enumerate([("TN_", "📘"), ("DS_", "⚖️"), ("SN_", "✍️")]):
             with tabs[i]:
                 filtered = df_topics[df_topics[id_col].str.upper().str.startswith(pref)]
+                if filtered.empty: st.info("Hiện tại chưa có bài tập nào.")
                 for _, row in filtered.iterrows():
                     with st.container(border=True):
                         c1, c2 = st.columns([4, 1.2])
-                        c1.write(f"**{ico} {row.get('title', 'Không tiêu đề')}**")
+                        c1.write(f"**{ico} {row.get('title', 'Chưa đặt tên')}**")
                         if c2.button("Làm bài", key=f"btn_{row[id_col]}"):
                             st.session_state.update({"current_id": row[id_col].lower(), "current_title": row['title'], "page": "Quiz"})
                             st.rerun()
     else:
-        st.error(f"❌ KHÔNG TÌM THẤY DỮ LIỆU (Lỗi 404).")
-        st.info("💡 Cách sửa: Thầy mở Sheets -> Nhấn Chia sẻ -> Chọn 'Bất kỳ ai có đường liên kết'.")
+        st.error("❌ Vẫn bị lỗi 404 - Không tải được dữ liệu.")
+        st.info("💡 Thầy hãy kiểm tra lại xem Link trong Secrets có đúng là link Google Sheets không nhé.")
 
 # --- 5. TRANG LÀM BÀI ---
 elif st.session_state.page == "Quiz":
     if st.session_state.current_exam is None:
+        # GID câu hỏi: 1136737670, GID cấu hình: 1961957372
         df_q = load_data(get_csv_url(SHEET_URL, "1136737670"))
         df_c = load_data(get_csv_url(SHEET_URL, "1961957372"))
         
@@ -91,17 +95,16 @@ elif st.session_state.page == "Quiz":
                     selected.append(lv.sample(n=min(len(lv), int(r['num_questions']))))
             if selected: st.session_state.current_exam = pd.concat(selected).reset_index(drop=True)
 
-    st.write(f"### {st.session_state.current_title}")
+    st.write(f"### 📝 {st.session_state.current_title}")
     if st.button("⬅️ Quay lại"): st.session_state.update({"page": "Home", "current_exam": None}); st.rerun()
 
     if st.session_state.current_exam is not None:
         with st.form("f_quiz"):
-            un, uc = st.text_input("👤 Họ tên:"), st.text_input("🏫 Lớp:")
+            un, uc = st.text_input("Họ tên:"), st.text_input("Lớp:")
             for i, row in st.session_state.current_exam.iterrows():
                 with st.container(border=True):
                     st.write(f"**Câu {i+1}:** {row['q']}")
-                    img = str(row.get('image','')).strip()
-                    if img.startswith("http"): st.image(img)
+                    if str(row.get('image','')).startswith("http"): st.image(row['image'])
                     
                     tp = str(row['type']).lower()
                     if tp == "choice":
@@ -115,7 +118,5 @@ elif st.session_state.page == "Quiz":
                     elif tp == "short": st.text_input("Đáp án:", key=f"s_{i}")
             
             if st.form_submit_button("NỘP BÀI"):
-                if un and uc: st.balloons(); st.success("Nộp bài thành công!")
-                else: st.error("Vui lòng điền đủ Tên và Lớp!")
-    else:
-        st.warning("Đang tải câu hỏi hoặc không tìm thấy nội dung...")
+                if un and uc: st.balloons(); st.success("Nộp thành công!")
+                else: st.error("Điền tên và lớp nhé!")
