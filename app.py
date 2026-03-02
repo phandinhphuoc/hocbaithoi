@@ -8,15 +8,12 @@ for key in ["page", "current_id", "current_exam"]:
     if key not in st.session_state:
         st.session_state[key] = "Home" if key == "page" else None
 
-# --- 2. HÀM TẢI DỮ LIỆU THÔNG MINH (CHỐNG 404) ---
-def get_csv_url(sheet_url, gid=None):
-    try:
-        file_id = re.search(r"/d/([a-zA-Z0-9-_]+)", sheet_url).group(1)
-        # Nếu không có GID cụ thể, chỉ lấy file gốc (mặc định trang 1)
-        base = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=csv"
-        if gid: base += f"&gid={gid}"
-        return base
-    except: return ""
+# --- 2. HÀM TẢI DỮ LIỆU "BẤT BẠI" ---
+def get_csv_url(sheet_url, gid):
+    # Trích xuất ID file: 1dQa0evyJJ1JU28ftCwRtCehAPYljdcGECqnlUTuiMrY
+    match = re.search(r"/d/([a-zA-Z0-9-_]+)", sheet_url)
+    file_id = match.group(1) if match else "1dQa0evyJJ1JU28ftCwRtCehAPYljdcGECqnlUTuiMrY"
+    return f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=csv&gid={gid}"
 
 @st.cache_data(ttl=5)
 def load_data(url):
@@ -24,34 +21,29 @@ def load_data(url):
         df = pd.read_csv(url, dtype=str)
         df.columns = [str(c).strip().lower() for c in df.columns]
         return df.fillna("")
-    except: return None
+    except Exception as e:
+        return None
 
-# --- 3. GIAO DIỆN ---
-st.markdown("<style>header {visibility: hidden;} .stApp { background-color: #0D1117; color: #C9D1D9; }</style>", unsafe_allow_html=True)
-
+# --- 3. LẤY LINK ---
 try:
     SHEET_BASE = st.secrets["connections"]["gsheets"]["spreadsheet"]
 except:
-    st.error("❌ Thầy chưa cấu hình Secrets!"); st.stop()
+    SHEET_BASE = "https://docs.google.com/spreadsheets/d/1dQa0evyJJ1JU28ftCwRtCehAPYljdcGECqnlUTuiMrY/edit"
 
 # --- 4. TRANG CHỦ ---
 if st.session_state.page == "Home":
     st.markdown('<h1 style="text-align:center; color:#58A6FF;">LUYỆN THI TOÁN 2026</h1>', unsafe_allow_html=True)
     
-    # THỬ TẢI VỚI GID CỦA THẦY, NẾU LỖI THÌ TỰ ĐỘNG TẢI TRANG ĐẦU (GID=0)
+    # Thử tải tab danh mục (Thầy hãy thử GID 0 nếu 1125343128 lỗi)
     df_topics = load_data(get_csv_url(SHEET_BASE, "1125343128"))
-    if df_topics is None:
-        df_topics = load_data(get_csv_url(SHEET_BASE, "0"))
+    if df_topics is None: df_topics = load_data(get_csv_url(SHEET_BASE, "0"))
     
     if df_topics is not None:
-        # Tìm cột ID bất kể tên là gì
         id_col = next((c for c in df_topics.columns if 'id' in c), df_topics.columns[0])
-        
         tabs = st.tabs(["📑 TRẮC NGHIỆM", "⚖️ ĐÚNG / SAI", "✍️ TRẢ LỜI NGẮN"])
         for i, pref in enumerate(["TN_", "DS_", "SN_"]):
             with tabs[i]:
                 filtered = df_topics[df_topics[id_col].str.upper().str.startswith(pref)]
-                if filtered.empty: st.info("Đang cập nhật...")
                 for _, row in filtered.iterrows():
                     with st.container(border=True):
                         c1, c2 = st.columns([4, 1.2])
@@ -60,7 +52,7 @@ if st.session_state.page == "Home":
                             st.session_state.update({"current_id": row[id_col].lower(), "current_title": row.get('title',''), "page": "Quiz"})
                             st.rerun()
     else:
-        st.error("❌ Vẫn lỗi 404. Thầy hãy nhấn nút 'Chia sẻ' trên Sheets -> 'Bất kỳ ai có liên kết' nhé!")
+        st.error("⚠️ Không thể tải dữ liệu. Thầy hãy kiểm tra nút 'Chia sẻ' trên Sheets đã chọn 'Bất kỳ ai có liên kết' chưa?")
 
 # --- 5. TRANG LÀM BÀI ---
 elif st.session_state.page == "Quiz":
